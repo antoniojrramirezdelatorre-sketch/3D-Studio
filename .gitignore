@@ -1,0 +1,12 @@
+# Binarios y objetos generados por la compilación
+*.o
+*.d
+3DStudio
+3dstudio.exe
+
+# Archivos temporales de configuración
+imgui.ini
+.vscode/
+.idea/
+
+# Mantener lib e include (NO ponerlos aquí)
