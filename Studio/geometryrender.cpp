@@ -313,10 +313,10 @@ void GeometryRender::keyCallBack(int key, int scancode, int action, int mods)
     // Model transforms (Legacy Part 1)
     Mat4x4 T;
     switch (key) {
-        case GLFW_KEY_LEFT:  makeRotationY(T, -10.0f); applyTransform(T); return;
-        case GLFW_KEY_RIGHT: makeRotationY(T,  10.0f); applyTransform(T); return;
-        case GLFW_KEY_UP:    makeRotationX(T, -10.0f); applyTransform(T); return;
-        case GLFW_KEY_DOWN:  makeRotationX(T,  10.0f); applyTransform(T); return;
+        case GLFW_KEY_LEFT:  makeRotationY(T, -10.0f); applyLocalTransform(T); return;
+        case GLFW_KEY_RIGHT: makeRotationY(T,  10.0f); applyLocalTransform(T); return;
+        case GLFW_KEY_UP:    makeRotationX(T, -10.0f); applyLocalTransform(T); return;
+        case GLFW_KEY_DOWN:  makeRotationX(T,  10.0f); applyLocalTransform(T); return;
         case GLFW_KEY_I:     makeTranslation(T, 0.0f,  0.1f, 0.0f); applyTransform(T); return;
         case GLFW_KEY_K:     makeTranslation(T, 0.0f, -0.1f, 0.0f); applyTransform(T); return;
         case GLFW_KEY_J:     makeTranslation(T, 0.1f,  0.0f, 0.0f); applyTransform(T); return;
@@ -559,6 +559,13 @@ void GeometryRender::applyTransform(const Mat4x4 T) {
     updateModelUniform();
 }
 
+void GeometryRender::applyLocalTransform(const Mat4x4 T) {
+    Mat4x4 R;
+    multiply(R, matModel, T);
+    memcpy(matModel, R, sizeof(Mat4x4));
+    updateModelUniform();
+}
+
 void GeometryRender::debugShader(void) const {
     GLint logSize;
     glGetProgramiv(program, GL_INFO_LOG_LENGTH, &logSize);
@@ -747,37 +754,50 @@ void GeometryRender::generateTwoPartTexCoords()
 {
     const float PI = 3.14159265358979323846f;
 
-    float minY =  1e9f;
-    float maxY = -1e9f;
-    for (const auto& v : vertices) {
-        minY = std::min(minY, v.position.y);
-        maxY = std::max(maxY, v.position.y);
-    }
-    float height = std::max(1e-6f, maxY - minY);
-
-    const float capFrac = 0.20f; // 20%  up/down
+    // Two-part texture mapping:
+    // Part 1: Map object point to intermediate sphere surface (normalize position)
+    // Part 2: Map intermediate sphere to 2D texture using spherical coordinates
+    //   u = 0.5 + atan2(n.z, n.x) / (2*PI)
+    //   v = 0.5 - asin(n.y) / PI
 
     for (auto& v : vertices) {
-        Vec3 p = v.position;
-        Vec3 n = normalize(p);
+        Vec3 n = normalize(v.position);
 
-        float u = 0.5f + (atan2(n.z, n.x) / (2.0f * PI));
-
-        // t = 0 -> bottom, 1  -> top
-        float t = (p.y - minY) / height;
-
-        bool inCap = (t < capFrac) || (t > (1.0f - capFrac));
-
-        float vCoord;
-        if (inCap) {
-            //(0 top, 1 bottom)
-            float yClamped = std::max(-1.0f, std::min(1.0f, n.y));
-            vCoord = 0.5f - (asin(yClamped) / PI);
-        } else {
-            vCoord = 1.0f - t;
-        }
+        float u = 0.5f + atan2(n.z, n.x) / (2.0f * PI);
+        float yClamped = std::max(-1.0f, std::min(1.0f, n.y));
+        float vCoord = 0.5f - asin(yClamped) / PI;
 
         v.texCoord = Vec2(u, vCoord);
+    }
+
+    // Fix seam: detect triangles that cross the atan2 discontinuity
+    // and duplicate vertices with corrected u coordinates
+    size_t numTriangles = indices.size() / 3;
+    for (size_t i = 0; i < numTriangles; ++i) {
+        unsigned int i0 = indices[i * 3 + 0];
+        unsigned int i1 = indices[i * 3 + 1];
+        unsigned int i2 = indices[i * 3 + 2];
+
+        float u0 = vertices[i0].texCoord.x;
+        float u1 = vertices[i1].texCoord.x;
+        float u2 = vertices[i2].texCoord.x;
+
+        // If max u - min u > 0.5, the triangle crosses the seam
+        float maxU = std::max({u0, u1, u2});
+        float minU = std::min({u0, u1, u2});
+
+        if (maxU - minU > 0.5f) {
+            // Duplicate vertices that have low u values and shift them by +1.0
+            for (int j = 0; j < 3; ++j) {
+                unsigned int& idx = indices[i * 3 + j];
+                if (vertices[idx].texCoord.x < 0.5f) {
+                    Vertex dup = vertices[idx];
+                    dup.texCoord.x += 1.0f;
+                    idx = static_cast<unsigned int>(vertices.size());
+                    vertices.push_back(dup);
+                }
+            }
+        }
     }
 }
 

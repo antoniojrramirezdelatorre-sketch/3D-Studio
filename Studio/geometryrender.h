@@ -112,6 +112,7 @@ private:
     static void makeRotationY(Mat4x4 R, float degrees);
     static void makeRotationZ(Mat4x4 R, float degrees);
     void  applyTransform(const Mat4x4 T);
+    void  applyLocalTransform(const Mat4x4 T);
     void  updateModelUniform();
         
     void updateViewUniform();
